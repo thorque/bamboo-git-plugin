@@ -13,6 +13,7 @@ import com.atlassian.bamboo.repository.NameValuePair;
 import com.atlassian.bamboo.repository.Repository;
 import com.atlassian.bamboo.repository.RepositoryException;
 import com.atlassian.bamboo.repository.SelectableAuthenticationRepository;
+import com.atlassian.bamboo.repository.TaggingAwareRepository;
 import com.atlassian.bamboo.security.StringEncrypter;
 import com.atlassian.bamboo.utils.SystemProperty;
 import com.atlassian.bamboo.utils.error.ErrorCollection;
@@ -35,6 +36,11 @@ import org.apache.commons.lang.NotImplementedException;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.lang.builder.EqualsBuilder;
 import org.apache.log4j.Logger;
+import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.api.errors.ConcurrentRefUpdateException;
+import org.eclipse.jgit.api.errors.InvalidTagNameException;
+import org.eclipse.jgit.api.errors.JGitInternalException;
+import org.eclipse.jgit.api.errors.NoHeadException;
 import org.eclipse.jgit.errors.TransportException;
 import org.eclipse.jgit.transport.URIish;
 import org.jetbrains.annotations.NotNull;
@@ -52,7 +58,7 @@ import java.util.concurrent.Callable;
 import java.util.Map;
 
 public class GitRepository extends AbstractRepository implements MavenPomAccessorCapableRepository, SelectableAuthenticationRepository, CustomVariableProviderRepository,
-        CustomSourceDirectoryAwareRepository
+        CustomSourceDirectoryAwareRepository, TaggingAwareRepository
 {
     // ------------------------------------------------------------------------------------------------------- Constants
 
@@ -511,6 +517,41 @@ public class GitRepository extends AbstractRepository implements MavenPomAccesso
     {
         return accessData.authenticationType != null ? accessData.authenticationType.name() : defaultAuthenticationType.name();
     }
+    
+    /* (non-Javadoc)
+     * @see com.atlassian.bamboo.repository.TaggingAwareRepository#createTag(long, java.lang.String, com.atlassian.bamboo.v2.build.BuildContext)
+     */
+    public void createTag(long repositoryId, String tagName, BuildContext buildContext)
+			throws RepositoryException {
+		final BuildLogger buildLogger = buildLoggerManager.getBuildLogger(buildContext.getPlanResultKey());
+		
+		buildLogger.addBuildLogEntry("Tagging for GitRepository was fired");
+		
+		String checkOutLocation = buildContext.getCheckoutLocation().get(repositoryId);
+		if (checkOutLocation == null || checkOutLocation.isEmpty())
+		{
+			buildLogger.addErrorLogEntry("Cannot determine the checkout location for repository "+getName());
+		}
+		try {
+			Git git = Git.open(new File(checkOutLocation));
+			git.tag().setName(tagName).setMessage("Adding auto-tag by Bamboo").call();
+			
+			final GitOperationHelper helper = new GitOperationHelper(buildLogger, textProvider);
+			helper.push(new File(checkOutLocation), accessData);
+			
+		} catch (IOException e) {
+			buildLogger.addErrorLogEntry(e.getLocalizedMessage(), e);
+		} catch (JGitInternalException e) {
+			buildLogger.addErrorLogEntry(e.getLocalizedMessage(), e);
+		} catch (ConcurrentRefUpdateException e) {
+			buildLogger.addErrorLogEntry(e.getLocalizedMessage(), e);
+		} catch (InvalidTagNameException e) {
+			buildLogger.addErrorLogEntry(e.getLocalizedMessage(), e);
+		} catch (NoHeadException e) {
+			buildLogger.addErrorLogEntry(e.getLocalizedMessage(), e);
+		}
+		
+	}
 
     // -------------------------------------------------------------------------------------------------- Public Methods
 

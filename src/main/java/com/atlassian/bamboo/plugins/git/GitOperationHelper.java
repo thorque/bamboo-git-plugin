@@ -16,6 +16,12 @@ import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang.ArrayUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.log4j.Logger;
+import org.codehaus.plexus.util.io.URLInputStreamFacade;
+import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.api.errors.ConcurrentRefUpdateException;
+import org.eclipse.jgit.api.errors.InvalidTagNameException;
+import org.eclipse.jgit.api.errors.JGitInternalException;
+import org.eclipse.jgit.api.errors.NoHeadException;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.dircache.DirCache;
 import org.eclipse.jgit.dircache.DirCacheCheckout;
@@ -27,6 +33,7 @@ import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.RefUpdate;
+import org.eclipse.jgit.lib.StoredConfig;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileRepository;
@@ -34,7 +41,10 @@ import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.eclipse.jgit.storage.file.RefDirectory;
 import org.eclipse.jgit.transport.FetchConnection;
 import org.eclipse.jgit.transport.FetchResult;
+import org.eclipse.jgit.transport.PushResult;
 import org.eclipse.jgit.transport.RefSpec;
+import org.eclipse.jgit.transport.RemoteConfig;
+import org.eclipse.jgit.transport.RemoteRefUpdate;
 import org.eclipse.jgit.transport.SshSessionFactory;
 import org.eclipse.jgit.transport.SshTransport;
 import org.eclipse.jgit.transport.TagOpt;
@@ -174,6 +184,68 @@ public class GitOperationHelper
                 localRepository.close();
             }
         }
+    }
+    
+    public void tag(@NotNull File sourceDirectory, String tagName)
+    {
+		try 
+		{
+			Git git = Git.open(sourceDirectory);
+			git.tag().setName(tagName).setMessage("Adding auto-tag by Bamboo").call();
+		} 
+		catch (JGitInternalException e) 
+		{
+			buildLogger.addErrorLogEntry(e.getLocalizedMessage(), e);
+		} 
+		catch (ConcurrentRefUpdateException e) 
+		{
+			buildLogger.addErrorLogEntry(e.getLocalizedMessage(), e);
+		} 
+		catch (InvalidTagNameException e)
+		{
+			buildLogger.addErrorLogEntry(e.getLocalizedMessage(), e);
+		}
+		catch (NoHeadException e) 
+		{
+			buildLogger.addErrorLogEntry(e.getLocalizedMessage(), e);
+		}
+		catch (IOException e) 
+		{
+			buildLogger.addErrorLogEntry(e.getLocalizedMessage(), e);
+		}
+    }
+    
+    /**
+     * Push all changes back to the upstream server
+     * @param sourceDirectory The directory containing the <code>.git</code> directory
+     * @param accessData The {@link GitRepositoryAccessData}
+     */
+    public void push(@NotNull final File sourceDirectory, @NotNull final GitRepositoryAccessData accessData)
+    {
+    		Transport transport = null;
+    		FileRepository localRepository = null;
+    		
+    		try 
+    		{
+			localRepository = createLocalRepository(sourceDirectory, null);
+			transport = open(localRepository, accessData);
+
+			final List<RefSpec> refSpecs = new ArrayList<RefSpec>(1);
+			refSpecs.add(Transport.REFSPEC_TAGS);
+			
+			final Collection<RemoteRefUpdate> toPush = transport.findRemoteRefUpdatesFor(refSpecs);
+			PushResult result = transport.push(new BuildLoggerProgressMonitor(buildLogger), toPush);
+			buildLogger.addBuildLogEntry("Git Push: " + result.getMessages());
+		} 
+    		catch (IOException e) 
+    		{
+    			buildLogger.addErrorLogEntry(e.getLocalizedMessage(), e);
+		}  
+    		catch (RepositoryException e)
+    		{
+			buildLogger.addErrorLogEntry(e.getLocalizedMessage(), e);
+		}
+    				
     }
 
     public void fetch(@NotNull final File sourceDirectory, @NotNull final GitRepositoryAccessData accessData, boolean useShallow) throws RepositoryException
